@@ -1,0 +1,7 @@
+node_modules
+.env
+data/wallets.json
+dist
+.DS_Store
+frontend/node_modules
+frontend/dist
