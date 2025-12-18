@@ -13,13 +13,18 @@ import {
   LogOut,
   Sparkles,
   Lock,
-  RefreshCw
+  RefreshCw,
+  ShieldCheck,
+  ShieldAlert,
+  Users
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import axios from 'axios';
+import { ethers } from 'ethers';
 import './App.css';
 
 const API_BASE = 'http://localhost:3000/api';
+const SEPOLIA_CHAIN_ID = '0xaa36a7'; // 11155111
 
 function App() {
   const [userId, setUserId] = useState(localStorage.getItem('userId') || '');
@@ -35,6 +40,10 @@ function App() {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState('');
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [mode, setMode] = useState('custodial'); // 'custodial' or 'non-custodial'
+  const [mmAddress, setMmAddress] = useState('');
+  const [history, setHistory] = useState([]);
+  const [securityStatus, setSecurityStatus] = useState({ score: 100, status: 'Secure', recentLogs: [] });
 
   const chatEndRef = useRef(null);
 
@@ -46,9 +55,15 @@ function App() {
   useEffect(() => {
     if (isLoggedIn && userId && password) {
       fetchWallet();
+      fetchHistory();
+      fetchSecurityStatus();
 
       // Auto-refresh balance every 30 seconds (conserves RPC quota)
-      const poll = setInterval(fetchWallet, 30000);
+      const poll = setInterval(() => {
+        fetchWallet();
+        fetchHistory();
+        fetchSecurityStatus();
+      }, 30000);
       return () => clearInterval(poll);
     }
   }, [isLoggedIn, userId, password]);
@@ -75,6 +90,28 @@ function App() {
         setIsRefreshing(false);
         setLoading(false);
       }, 800);
+    }
+  };
+
+  const fetchHistory = async () => {
+    try {
+      const resp = await axios.get(`${API_BASE}/history/${userId}`, { headers: authHeaders });
+      if (resp.data.success) {
+        setHistory(resp.data.transactions);
+      }
+    } catch (err) {
+      console.error("History fetch error", err);
+    }
+  };
+
+  const fetchSecurityStatus = async () => {
+    try {
+      const resp = await axios.get(`${API_BASE}/security-status/${userId}`, { headers: authHeaders });
+      if (resp.data.success) {
+        setSecurityStatus(resp.data);
+      }
+    } catch (err) {
+      console.error("Security status fetch error", err);
     }
   };
 
@@ -118,16 +155,28 @@ function App() {
     try {
       const resp = await axios.post(`${API_BASE}/chat`, {
         userId,
-        message: userMsg
+        message: userMsg,
+        mode: mode
       }, { headers: authHeaders });
 
+      if (resp.data.thought) {
+        setMessages(prev => [...prev, { role: 'ai', content: `*Thinking: ${resp.data.thought}*` }]);
+      }
       setMessages(prev => [...prev, { role: 'ai', content: resp.data.message }]);
+
+      if (resp.data.action === 'sign_required') {
+        await signAndSend(resp.data.transactions);
+      }
 
       // Always refresh balance after AI interaction to stay in sync
       fetchWallet();
+      fetchHistory();
 
-      if (resp.data.message.includes('created') || resp.data.message.includes('Transaction sent')) {
-        setTimeout(fetchWallet, 2000);
+      if (resp.data.success || resp.data.message.includes('succeeded') || resp.data.message.includes('Hash')) {
+        setTimeout(() => {
+          fetchWallet();
+          fetchHistory();
+        }, 3000);
       }
     } catch (err) {
       setMessages(prev => [...prev, { role: 'ai', content: "Authentication error or server down. Try logging in again." }]);
@@ -140,6 +189,104 @@ function App() {
     navigator.clipboard.writeText(wallet?.address);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const connectMetaMask = async () => {
+    if (window.ethereum) {
+      try {
+        const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+        
+        // Check network immediately
+        const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
+        if (currentChainId !== SEPOLIA_CHAIN_ID) {
+          try {
+            await window.ethereum.request({
+              method: 'wallet_switchEthereumChain',
+              params: [{ chainId: SEPOLIA_CHAIN_ID }],
+            });
+          } catch (e) {
+            console.warn("Network switch failed on connect, will retry on sign");
+          }
+        }
+
+        setMmAddress(accounts[0]);
+        setMode('non-custodial');
+      } catch (err) {
+        console.error("MetaMask connection failed", err);
+      }
+    } else {
+      alert("Please install MetaMask!");
+    }
+  };
+
+  const signAndSend = async (transactions) => {
+    if (!window.ethereum) return;
+    
+    setLoading(true);
+    try {
+      // 1. Ensure we are on Sepolia
+      const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
+      if (currentChainId !== SEPOLIA_CHAIN_ID) {
+        try {
+          await window.ethereum.request({
+            method: 'wallet_switchEthereumChain',
+            params: [{ chainId: SEPOLIA_CHAIN_ID }],
+          });
+        } catch (switchError) {
+          // This error code indicates that the chain has not been added to MetaMask.
+          if (switchError.code === 4902) {
+            await window.ethereum.request({
+              method: 'wallet_addEthereumChain',
+              params: [
+                {
+                  chainId: SEPOLIA_CHAIN_ID,
+                  chainName: 'Sepolia Test Network',
+                  nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 },
+                  rpcUrls: ['https://ethereum-sepolia-rpc.publicnode.com'],
+                  blockExplorerUrls: ['https://sepolia.etherscan.io'],
+                },
+              ],
+            });
+          } else {
+            throw switchError;
+          }
+        }
+      }
+
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+
+      for (const tx of transactions) {
+        const txResponse = await signer.sendTransaction({
+          to: tx.to,
+          value: tx.value
+        });
+        setMessages(prev => [...prev, { role: 'ai', content: `Transaction sent! Hash: ${txResponse.hash}` }]);
+        
+        // Record in backend history
+        await axios.post(`${API_BASE}/record-tx`, {
+          userId,
+          tx: {
+            type: 'send',
+            to: tx.to,
+            amount: ethers.formatEther(tx.value),
+            hash: txResponse.hash,
+            status: 'success',
+            mode: 'non-custodial'
+          }
+        }, { headers: authHeaders });
+
+        await txResponse.wait();
+      }
+      setMessages(prev => [...prev, { role: 'ai', content: "All transactions confirmed on-chain! 🎉" }]);
+    } catch (err) {
+      console.error("MetaMask Error:", err);
+      setMessages(prev => [...prev, { role: 'ai', content: `MetaMask Error: ${err.message}` }]);
+    } finally {
+      setLoading(false);
+      fetchWallet();
+      fetchHistory();
+    }
   };
 
   if (!isLoggedIn) {
@@ -204,15 +351,63 @@ function App() {
           <h2 style={{ fontSize: '14px', color: 'var(--text-muted)' }}>Secure Wallet of</h2>
           <h1 style={{ fontSize: '20px', fontWeight: '700' }}>{userId}</h1>
         </div>
-        <button onClick={handleLogout} className="btn" style={{ padding: '8px', background: 'var(--glass)' }}>
-          <LogOut size={18} />
-        </button>
+        <div style={{ display: 'flex', gap: '12px' }}>
+          <button 
+            onClick={connectMetaMask} 
+            className="btn" 
+            style={{ 
+              padding: '8px 16px', 
+              background: mmAddress ? 'rgba(74, 222, 128, 0.1)' : 'var(--glass)',
+              color: mmAddress ? '#4ade80' : 'inherit',
+              fontSize: '12px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}
+          >
+            <Wallet size={16} />
+            {mmAddress ? `${mmAddress.substring(0, 6)}...` : 'Connect MetaMask'}
+          </button>
+          <button onClick={handleLogout} className="btn" style={{ padding: '8px', background: 'var(--glass)' }}>
+            <LogOut size={18} />
+          </button>
+        </div>
       </header>
+
+      <div style={{ display: 'flex', gap: '12px', marginBottom: '24px' }}>
+        <button 
+          onClick={() => setMode('custodial')}
+          className={`btn ${mode === 'custodial' ? 'active' : ''}`}
+          style={{ flex: 1, fontSize: '12px', background: mode === 'custodial' ? 'var(--primary)' : 'var(--glass)' }}
+        >
+          <ShieldCheck size={14} style={{ marginRight: '8px' }} />
+          Custodial (Server)
+        </button>
+        <button 
+          onClick={() => setMode('non-custodial')}
+          className={`btn ${mode === 'non-custodial' ? 'active' : ''}`}
+          style={{ flex: 1, fontSize: '12px', background: mode === 'non-custodial' ? 'var(--primary)' : 'var(--glass)' }}
+        >
+          <ShieldAlert size={14} style={{ marginRight: '8px' }} />
+          Non-Custodial (MetaMask)
+        </button>
+      </div>
 
       <motion.div
         layoutId="balance"
         className="balance-card floating"
       >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <ShieldCheck size={16} color={securityStatus.score > 80 ? '#4ade80' : '#fbbf24'} />
+            <span style={{ fontSize: '12px', fontWeight: '600', color: securityStatus.score > 80 ? '#4ade80' : '#fbbf24' }}>
+              Security: {securityStatus.status} ({securityStatus.score}%)
+            </span>
+          </div>
+          <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
+            Sepolia Testnet
+          </div>
+        </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span style={{ fontSize: '14px', opacity: 0.8 }}>Total Balance</span>
           <button
@@ -242,6 +437,34 @@ function App() {
         )}
       </motion.div>
 
+      {wallet?.contacts && Object.keys(wallet.contacts).length > 0 && (
+        <div className="glass-card" style={{ padding: '16px', marginBottom: '24px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+            <Users size={16} color="var(--primary)" />
+            <span style={{ fontSize: '14px', fontWeight: '600' }}>Contacts</span>
+          </div>
+          <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '4px' }}>
+            {Object.entries(wallet.contacts).map(([handle, addr]) => (
+              <div 
+                key={handle} 
+                title={addr}
+                style={{ 
+                  background: 'var(--glass)', 
+                  padding: '6px 12px', 
+                  borderRadius: '20px', 
+                  fontSize: '12px',
+                  border: '1px solid var(--glass-border)',
+                  whiteSpace: 'nowrap',
+                  cursor: 'help'
+                }}
+              >
+                {handle}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '32px' }}>
         <div className="glass-card" style={{ padding: '16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
           <div className="btn" style={{ padding: '8px', borderRadius: '10px' }}>
@@ -260,19 +483,42 @@ function App() {
       <div className="glass-card" style={{ padding: '24px', flex: 1, marginBottom: '100px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
           <History size={18} color="var(--primary)" />
-          <h3 style={{ fontSize: '16px' }}>Quick Actions</h3>
+          <h3 style={{ fontSize: '16px' }}>Transaction History</h3>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          {['Check Gas Prices', 'What is Ethereum?', 'Show my address'].map((action, i) => (
-            <button
-              key={i}
-              className="input-field"
-              style={{ marginBottom: 0, textAlign: 'left', cursor: 'pointer' }}
-              onClick={() => { setInput(action); }}
-            >
-              {action}
-            </button>
-          ))}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '300px', overflowY: 'auto' }}>
+          {history.length > 0 ? (
+            history.map((tx, i) => (
+              <div key={i} className="history-item">
+                <div className="history-info">
+                  <span className="history-type" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    {tx.type === 'send' ? <ArrowUpRight size={14} /> : <ArrowDownLeft size={14} />}
+                    {tx.type.toUpperCase()}
+                  </span>
+                  <span className="history-amount">{tx.amount} ETH</span>
+                </div>
+                <div className="history-details">
+                  <span title={tx.to}>
+                    To: {tx.to.startsWith('@') ? tx.to : `${tx.to.substring(0, 6)}...${tx.to.substring(38)}`}
+                  </span>
+                  <span className={`status-badge ${tx.status || 'success'}`}>
+                    {tx.status || 'success'}
+                  </span>
+                </div>
+                {tx.hash && (
+                  <div style={{ fontSize: '9px', marginTop: '4px', opacity: 0.5, fontFamily: 'monospace' }}>
+                    Hash: {tx.hash.substring(0, 20)}...
+                  </div>
+                )}
+                {tx.error && (
+                  <div style={{ fontSize: '9px', marginTop: '4px', color: '#f87171', fontStyle: 'italic' }}>
+                    Error: {tx.error}
+                  </div>
+                )}
+              </div>
+            ))
+          ) : (
+            <p style={{ fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center' }}>No transactions yet.</p>
+          )}
         </div>
       </div>
 

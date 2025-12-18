@@ -110,7 +110,7 @@ app.post('/api/login', authLimiter, async (req, res) => {
 // Chat endpoint - process user messages and manage session state
 app.post('/api/chat', [authenticateUser, chatLimiter], async (req, res) => {
   try {
-    const { userId, message, sessionId } = req.body;
+    const { userId, message, sessionId, mode } = req.body;
 
     if (!userId || !message) {
       return res.status(400).json({
@@ -120,7 +120,7 @@ app.post('/api/chat', [authenticateUser, chatLimiter], async (req, res) => {
     }
 
     // Process the message through the AI agent
-    const result = await processCommand(userId, message, sessionId);
+    const result = await processCommand(userId, message, sessionId, mode || 'custodial');
 
     // Respond with the result
     res.json(result);
@@ -137,7 +137,7 @@ app.post('/api/chat', [authenticateUser, chatLimiter], async (req, res) => {
 app.get('/api/wallet/:userId', authenticateUser, async (req, res) => {
   try {
     const { userId } = req.params;
-    const wallet = walletManager.getWallet(userId);
+    const wallet = walletManager.getSafeWallet(userId);
 
     if (!wallet) {
       return res.status(404).json({
@@ -151,7 +151,7 @@ app.get('/api/wallet/:userId', authenticateUser, async (req, res) => {
 
     res.json({
       success: true,
-      address: wallet.address,
+      ...wallet,
       balance: ethers.formatEther(balance),
       balanceWei: balance.toString()
     });
@@ -232,11 +232,30 @@ app.post('/api/transaction/:userId', authenticateUser, async (req, res) => {
       });
     }
 
+    // Check Guardrails (Daily Limit)
+    const allowed = walletManager.checkAndUpdateLimit(userId, amount);
+    if (!allowed) {
+      return res.status(400).json({
+        success: false,
+        message: 'Daily limit exceeded'
+      });
+    }
+
     // Send transaction
     const tx = await walletInstance.sendTransaction({
       to: recipient,
       value: amountWei,
       gasLimit: 21000 // Standard gas limit for ETH transfers
+    });
+
+    // Record transaction
+    walletManager.recordTransaction(userId, {
+      type: 'send',
+      to: recipient,
+      amount: amount,
+      hash: tx.hash,
+      status: 'success',
+      mode: 'custodial'
     });
 
     res.json({
@@ -255,6 +274,54 @@ app.post('/api/transaction/:userId', authenticateUser, async (req, res) => {
   }
 });
 
+
+// Get transaction history
+app.get('/api/history/:userId', authenticateUser, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const wallet = walletManager.getSafeWallet(userId);
+
+    if (!wallet) {
+      return res.status(404).json({
+        success: false,
+        message: 'No wallet found for this user'
+      });
+    }
+
+    res.json({
+      success: true,
+      transactions: wallet.transactions || []
+    });
+  } catch (error) {
+    console.error('Error getting history:', error);
+    res.status(500).json({
+      success: false,
+      message: `Server error: ${error.message}`
+    });
+  }
+});
+
+// Record a transaction (useful for non-custodial mode)
+app.post('/api/record-tx', authenticateUser, async (req, res) => {
+  try {
+    const { userId, tx } = req.body;
+    walletManager.recordTransaction(userId, tx);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Get security status
+app.get('/api/security-status/:userId', authenticateUser, (req, res) => {
+  try {
+    const { userId } = req.params;
+    const status = walletManager.getSecurityStatus(userId);
+    res.json({ success: true, ...status });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
 
 // Basic health check
 app.get('/api/health', (req, res) => {

@@ -1,89 +1,109 @@
-# Onchain AI Agent 🤖⛓️
+# Onchain AI Agent: The Intent-Centric Web3 Assistant 🤖⛓️
 
-Onchain AI Agent is a premium, LLM-powered cryptocurrency payment assistant that combines the ease of modern payment apps (like PhonePe/GPay) with the power of blockchain. It features a secure, password-protected multi-user wallet system and a "thinking" AI brain capable of understanding complex natural language for transaction execution.
+Onchain AI Agent is not just a wallet; it's a **Cognitive Intent Layer** for the blockchain. While MetaMask is a tool for manual execution, this agent understands **human intent**, automates complex workflows, and brings "Web2-level" simplicity to decentralized finance.
 
-![Dashboard Preview](https://img.shields.io/badge/UI-Glassmorphism-blueviolet)
-![Chain](https://img.shields.io/badge/Network-Sepolia_Testnet-blue)
-![Security](https://img.shields.io/badge/Security-AES--256--GCM-green)
+![Vision](https://img.shields.io/badge/Vision-Intent--Centric-blueviolet)
+![Status](https://img.shields.io/badge/Status-Production--Ready--Roadmap-green)
+
+## 🚀 The 5 Pillars of Real-World Utility
+
+### 1. 🧠 Intent-Centric UX (Beyond Manual Clicks)
+MetaMask requires you to know the "how." This agent focuses on the "what."
+- **Use Case**: *"Split $100 in ETH between Alice and Bob."*
+- **Value**: The agent handles the math, fetches addresses, and prepares the multi-transaction flow.
+
+### 2. 💬 Conversational Commerce & Social Payments
+Seamlessly integrate crypto into chat-based environments (Telegram, Discord, Support Bots).
+- **Use Case**: *"Pay my share of the dinner to @subhajit."*
+- **Value**: Eliminates the friction of switching apps and copying 0x addresses.
+
+### 3. 📊 Complex DeFi Strategy Execution
+Automate multi-step DeFi actions that are usually intimidating for non-technical users.
+- **Use Case**: *"Move my idle ETH to the highest-yielding stablecoin pool."*
+- **Value**: The agent researches, calculates paths, and executes complex swaps/deposits in one sentence.
+
+### 4. 👤 Accessibility & Human-Readable Onboarding
+The "0x..." address format is a UX nightmare. We replace it with human handles.
+- **Use Case**: *"Send 0.05 ETH to @marketing_team."*
+- **Value**: Maps internal handles or ENS names to addresses, making crypto feel like Venmo or CashApp.
+
+### 5. 🛡️ Automated Treasury & Guardrails
+Enterprise-grade security for teams and DAOs through programmable constraints.
+- **Use Case**: *"Only allow payments to whitelisted vendors up to 1 ETH/day."*
+- **Value**: Adds a layer of "Smart Policy" that prevents theft or human error, even if the AI is misinterpreted.
 
 ## ✨ Features
 
-- 🧠 **True AI Intelligence**: Powered by OpenRouter (LLM) to understand context, reason through requests, and prevent errors.
-- 📱 **Premium UI**: Modern "Glassmorphism" design with real-time balance updates and micro-animations.
-- 🔒 **Military-Grade Security**: Private keys are encrypted using AES-256-GCM. User accounts are secured with bcrypt password hashing.
-- 💸 **Natural Language Payments**: Just say *"Send 0.001 ETH to 0x..."* and the agent handles the rest.
-- 📊 **Real-Time Dashboard**: Monitor your Sepolia ETH balance and manage your secure wallet.
-- ⚡ **Streamlined UX**: Direct one-click confirmations for transactions identified by the AI.
-
-## 🚀 Getting Started
-
-### Prerequisites
-
-- **Node.js**: v18 or higher
-- **OpenRouter API Key**: Get one at [openrouter.ai](https://openrouter.ai/)
-- **Sepolia ETH**: Get some from a faucet (e.g., Alchemy or Google Faucet)
-
-### Installation & Setup
-
-1. **Clone the project & install dependencies**:
-   ```bash
-   # Install Backend dependencies
-   cd onchain-ai-agent
-   npm install
-
-   # Install Frontend dependencies
-   cd frontend
-   npm install
-   ```
-
-2. **Configure Environment Variables**:
-   Create a `.env` file in the `onchain-ai-agent/` directory:
-   ```env
-   RPC_URL=https://ethereum-sepolia-rpc.publicnode.com
-   ENCRYPTION_KEY=your_32_char_random_key_here
-   OPENROUTER_API_KEY=your_openrouter_api_key
-   LLM_MODEL=meta-llama/llama-3.1-8b-instruct:free
-   PORT=3000
-   ```
-
-3. **Start the Engines**:
-   ```bash
-   # Terminal 1: Start Backend (from onchain-ai-agent/)
-   npm start
-
-   # Terminal 2: Start Frontend (from onchain-ai-agent/frontend/)
-   npm run dev
-   ```
-
-Visit `http://localhost:5173` to access the dashboard.
+- 🧠 **Context-Aware Intelligence**: Powered by OpenRouter (LLM) with real-time injection of user balance, contacts, and guardrails into every decision.
+- 🛡️ **Security Health Scoring**: Real-time monitoring of wallet activity with a dynamic security score and event logging.
+- ⚔️ **Adversarial Defense**: Hardened system prompts to prevent prompt injection, social engineering, and unauthorized identity changes.
+- 🔒 **Safe Wallet Pattern**: Sanitized API layer ensures private keys and password hashes never leave the secure backend logic.
+- 🚦 **Smart Guardrails**: Programmable daily spending limits and whitelisting to prevent unauthorized large transfers.
+- ⛽ **Gas-Aware Execution**: Robust transaction processing with real-time gas estimation, EIP-1559 support, and detailed error feedback.
+- 👥 **Handle & ENS Mapping**: Use names (@handle) or Ethereum Name Service (.eth) instead of addresses.
+- 💸 **Natural Language Payments**: Full support for complex, multi-recipient intents and split payments.
+- 📊 **Transaction History**: Persistent tracking of all on-chain activity with status badges (Success/Failed) and transaction hashes.
+- 🎨 **Modern Glassmorphism UI**: A high-end React dashboard with real-time updates, security badges, and "Thinking" state indicators.
 
 ## 🛠️ Architecture
 
 - **Backend**: Node.js + Express.js
-- **Blockchain**: Ethers.js (Sepolia Testnet)
-- **AI Brain**: OpenRouter API with JSON-based tool-calling
-- **Frontend**: React + Vite + Framer Motion (for animations)
-- **Styling**: Vanilla CSS (Premium Glassmorphism Theme)
+- **Blockchain**: Ethers.js v6 (Sepolia Testnet)
+- **AI Brain**: OpenRouter API with JSON-based tool-calling and **Dynamic Context Injection**.
+- **Security**: AES-256-GCM encryption + bcrypt hashing + **Security Event Logging** + **Sanitized API Responses**.
+- **Frontend**: React + Vite + Framer Motion + Lucide Icons + **Real-time Security Monitoring**.
 
-## 🔒 Security Notes
+## 🚀 Getting Started
 
-- User passwords never leave the server in plain text (hashed with bcrypt).
-- Private keys are stored in `data/wallets.json` only after being encrypted with your unique `ENCRYPTION_KEY`.
-- The AI includes a safety verification step: it will prepare the transaction and ask for your "confirm" before broadcasting to the blockchain.
+### Prerequisites
+- **Node.js**: v18+
+- **OpenRouter API Key**: [openrouter.ai](https://openrouter.ai/)
+- **Sepolia ETH**: [Alchemy Faucet](https://www.alchemy.com/faucets/ethereum-sepolia)
 
-## 🤝 Contributing
+### Installation
+1. **Clone & Install Backend**:
+   ```bash
+   npm install
+   ```
+2. **Install Frontend**:
+   ```bash
+   cd frontend && npm install
+   ```
 
-1. Fork the repo.
-2. Create your feature branch.
-3. Commit your changes.
-4. Push to the branch.
-5. Create a new Pull Request.
+### Configuration (.env)
+Create a `.env` file in the root directory:
+```env
+PORT=3001
+RPC_URL=https://ethereum-sepolia-rpc.publicnode.com
+ENCRYPTION_KEY=your_32_char_random_key_here
+OPENROUTER_API_KEY=your_openrouter_key_here
+LLM_MODEL=meta-llama/llama-3.1-8b-instruct:free
+```
 
-## 📄 License
-
-MIT License - feel free to use for your own projects!
+### Running the Project
+1. **Start Backend**: `node server.js`
+2. **Start Frontend**: `cd frontend && npm run dev`
+3. **Access**: Open `http://localhost:5173`
 
 ---
 
-> [!CAUTION]
-> **Production Disclaimer**: This project is designed as a **Testnet-only** proof of concept. For a production-grade "Mainnet" application handling real significant value, storing private keys in a local filesystem (even if encrypted) is not recommended. Professional implementations should utilize Hardware Security Modules (HSM), Multi-Party Computation (MPC), or non-custodial browser extensions (like MetaMask) where the user maintains full control over their keys.
+> [!TIP]
+> **Try these commands in the AI Chat:**
+> - *"Remember @alice is 0x742..."*
+> - *"Send 0.01 ETH to @alice and 0.02 ETH to vitalik.eth"*
+> - *"Set my daily limit to 0.5 ETH"*
+> - *"What is my security status?"*
+> - *"What is my transaction history?"*
+
+> [!IMPORTANT]
+> **Security First**: The agent features a **Real-time Security Badge** in the dashboard. If you see a "Warning" or "Critical" status, check the security logs for suspicious activity or failed login attempts.
+
+## 🗺️ Roadmap to Production
+
+To move from PoC to a Mainnet-ready production environment, we recommend:
+1. **HSM/MPC Integration**: Move server-side keys to Hardware Security Modules (AWS KMS or HashiCorp Vault) for the custodial mode.
+2. **Account Abstraction (ERC-4337)**: Replace simple EOA wallets with Smart Contract Wallets for better recovery, gas sponsorship, and social recovery.
+3. **Multi-Chain Support**: Expand beyond Sepolia to L2s like Base, Arbitrum, and Optimism for lower fees.
+4. **Advanced Guardrails**: Implement time-locks and multi-sig requirements for large transactions.
+
+---

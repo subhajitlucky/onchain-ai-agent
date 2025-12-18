@@ -68,6 +68,11 @@ body {
   opacity: 0.9;
 }
 
+.btn.active {
+  box-shadow: 0 0 15px var(--primary);
+  border: 1px solid rgba(255,255,255,0.3);
+}
+
 .input-field {
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid var(--glass-border);
@@ -220,4 +225,73 @@ body {
 
 .floating {
   animation: float 6s ease-in-out infinite;
+}
+
+.address-badge {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--glass-border);
+  padding: 8px 12px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-top: 16px;
+}
+
+.address-badge:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: var(--primary);
+}
+
+.status-badge {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.status-badge.success {
+  background: rgba(74, 222, 128, 0.2);
+  color: #4ade80;
+}
+
+.status-badge.failed {
+  background: rgba(248, 113, 113, 0.2);
+  color: #f87171;
+}
+
+.history-item {
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  padding: 12px;
+  border-radius: 12px;
+  margin-bottom: 8px;
+}
+
+.history-info {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.history-type {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.history-amount {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.history-details {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  color: var(--text-muted);
 }
