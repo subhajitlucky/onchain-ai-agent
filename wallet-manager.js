@@ -18,11 +18,16 @@ if (!fs.existsSync(DATA_DIR)) {
 }
 
 const WALLETS_FILE = path.join(DATA_DIR, 'wallets.json');
+const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
 
 // Initialize wallets storage
 function initializeWalletStorage() {
   if (!fs.existsSync(WALLETS_FILE)) {
     fs.writeFileSync(WALLETS_FILE, JSON.stringify({}), 'utf8');
+  }
+  if (!fs.existsSync(SESSIONS_FILE)) {
+    fs.writeFileSync(SESSIONS_FILE, JSON.stringify({}), 'utf8');
+    fs.chmodSync(SESSIONS_FILE, 0o600);
   }
 }
 
@@ -358,6 +363,20 @@ function getSecurityStatus(userId) {
   };
 }
 
+// Session Management
+function loadSessions() {
+  initializeWalletStorage();
+  try {
+    return JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+  } catch (err) {
+    return {};
+  }
+}
+
+function saveSessions(sessions) {
+  fs.writeFileSync(SESSIONS_FILE, JSON.stringify(sessions, null, 2), 'utf8');
+}
+
 // Export functions
 module.exports = {
   createWallet,
@@ -372,5 +391,7 @@ module.exports = {
   checkAndUpdateLimit,
   recordTransaction,
   logSecurityEvent,
-  getSecurityStatus
+  getSecurityStatus,
+  loadSessions,
+  saveSessions
 };

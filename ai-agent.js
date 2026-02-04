@@ -11,7 +11,7 @@ const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const LLM_MODEL = process.env.LLM_MODEL || 'meta-llama/llama-3.1-8b-instruct:free';
 
 // Session storage for context
-const userSessions = {};
+const userSessions = walletManager.loadSessions();
 
 const SYSTEM_PROMPT = `
 You are "Onchain AI Agent", a high-end, sophisticated AI Crypto Assistant. Your goal is to help users manage their Ethereum wallets and make payments securely with a professional yet helpful tone.
@@ -113,6 +113,8 @@ USER CONTEXT:
     session.history.push({ role: 'user', content: message });
     session.history.push({ role: 'assistant', content: aiContent });
 
+    walletManager.saveSessions(userSessions);
+
     return JSON.parse(aiContent);
   } catch (error) {
     console.error("LLM Error:", error.response?.data || error.message);
@@ -135,11 +137,13 @@ async function processCommand(userId, message, sessionId = null, mode = 'custodi
         original: r.original || r.to
       }));
       session.state = {}; // Clear state
+      walletManager.saveSessions(userSessions);
       return { success: true, action: 'sign_required', transactions: txData, message: "Please sign the transaction(s) in your wallet." };
     }
 
     const result = await executeSendEth(userId, session.state.pendingTx.recipients, password);
     session.state = {}; // Clear state
+    walletManager.saveSessions(userSessions);
     return result;
   }
 
@@ -167,6 +171,7 @@ async function processCommand(userId, message, sessionId = null, mode = 'custodi
     case 'text':
     default:
       const msg = decision.params?.message || decision.message || decision.content || "I'm here to help! You can ask me to send ETH, check your balance, or explain crypto concepts like Ethereum and Gas fees.";
+      walletManager.saveSessions(userSessions);
       return { success: true, message: msg };
   }
 }
@@ -183,6 +188,7 @@ function getOrCreateSession(userId, sessionId = null) {
       state: {},
       history: []
     };
+    walletManager.saveSessions(userSessions);
   }
   return userSessions[sessionKey];
 }
@@ -277,6 +283,7 @@ async function startSendEthProcess(userId, session, params) {
 
   // Store for confirmation
   session.state.pendingTx = { recipients: resolvedRecipients };
+  walletManager.saveSessions(userSessions);
 
   const summary = resolvedRecipients.map(r => `${r.amount} ETH to ${r.original || r.to}`).join(', ');
   return {

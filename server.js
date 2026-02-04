@@ -41,9 +41,6 @@ const chatLimiter = rateLimit({
   message: { success: false, message: 'Slow down! Too many messages.' }
 });
 
-// Session storage
-const sessions = {};
-
 // Authentication middleware
 async function authenticateUser(req, res, next) {
   const userId = req.headers['x-user-id'] || req.body.userId || req.params.userId;
