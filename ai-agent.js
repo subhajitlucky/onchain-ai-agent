@@ -123,7 +123,7 @@ USER CONTEXT:
 /**
  * Process natural language commands using LLM
  */
-async function processCommand(userId, message, sessionId = null, mode = 'custodial') {
+async function processCommand(userId, message, sessionId = null, mode = 'custodial', password = null) {
   const session = getOrCreateSession(userId, sessionId);
 
   // 1. Check for manual 'confirm' if a transaction was pending
@@ -138,7 +138,7 @@ async function processCommand(userId, message, sessionId = null, mode = 'custodi
       return { success: true, action: 'sign_required', transactions: txData, message: "Please sign the transaction(s) in your wallet." };
     }
 
-    const result = await executeSendEth(userId, session.state.pendingTx.recipients);
+    const result = await executeSendEth(userId, session.state.pendingTx.recipients, password);
     session.state = {}; // Clear state
     return result;
   }
@@ -285,10 +285,10 @@ async function startSendEthProcess(userId, session, params) {
   };
 }
 
-async function executeSendEth(userId, recipients) {
+async function executeSendEth(userId, recipients, password = null) {
   try {
     console.log(`[Execute] Starting execution for user ${userId}, ${recipients.length} recipients`);
-    const walletInstance = walletManager.getWalletInstance(userId, provider);
+    const walletInstance = walletManager.getWalletInstance(userId, provider, password);
     if (!walletInstance) {
       throw new Error("Could not initialize wallet instance. Check if user exists.");
     }

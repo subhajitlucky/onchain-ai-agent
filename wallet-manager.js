@@ -27,9 +27,9 @@ function initializeWalletStorage() {
 }
 
 // Encrypt private key
-function encryptPrivateKey(privateKey) {
+function encryptPrivateKey(privateKey, encryptionKey) {
   const iv = crypto.randomBytes(16);
-  const cipher = crypto.createCipheriv('aes-256-gcm', Buffer.from(ENCRYPTION_KEY), iv);
+  const cipher = crypto.createCipheriv('aes-256-gcm', Buffer.from(encryptionKey), iv);
 
   let encrypted = cipher.update(privateKey, 'utf8', 'hex');
   encrypted += cipher.final('hex');
@@ -43,10 +43,10 @@ function encryptPrivateKey(privateKey) {
 }
 
 // Decrypt private key
-function decryptPrivateKey(encryptedData, iv, authTag) {
+function decryptPrivateKey(encryptedData, iv, authTag, encryptionKey) {
   const decipher = crypto.createDecipheriv(
     'aes-256-gcm',
-    Buffer.from(ENCRYPTION_KEY),
+    Buffer.from(encryptionKey),
     Buffer.from(iv, 'hex')
   );
 
@@ -58,12 +58,18 @@ function decryptPrivateKey(encryptedData, iv, authTag) {
   return decrypted;
 }
 
+// Derive encryption key from password and salt
+function deriveKey(password, salt) {
+  // PBKDF2 with 100,000 iterations, 32 bytes (256 bits), sha256
+  return crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha256');
+}
+
 // Load all wallets
 function loadWallets() {
   initializeWalletStorage();
   const wallets = JSON.parse(fs.readFileSync(WALLETS_FILE, 'utf8'));
   
-  // Migration: Ensure all users have contacts and guardrails
+  // Migration: Ensure all users have contacts, guardrails and key salts
   let changed = false;
   for (const userId in wallets) {
     if (!wallets[userId].contacts) {
@@ -86,6 +92,10 @@ function loadWallets() {
     if (!wallets[userId].securityLogs) {
       wallets[userId].securityLogs = [];
       changed = true;
+    }
+    if (!wallets[userId].keySalt) {
+      // For legacy wallets, we'll keep using the global ENCRYPTION_KEY
+      // We don't add a salt here to avoid breaking them
     }
   }
   
@@ -119,16 +129,21 @@ async function createWallet(userId, password) {
   const privateKey = wallet.privateKey;
   const address = wallet.address;
 
-  // Encrypt the private key
-  const encryptedKey = encryptPrivateKey(privateKey);
+  // Generate a unique salt for this user's key derivation
+  const keySalt = crypto.randomBytes(16).toString('hex');
+  const userEncryptionKey = deriveKey(password, keySalt);
 
-  // Hash the password
+  // Encrypt the private key with the user-derived key
+  const encryptedKey = encryptPrivateKey(privateKey, userEncryptionKey);
+
+  // Hash the password for login verification
   const hashedPassword = await bcrypt.hash(password, 10);
 
   // Store wallet info
   wallets[userId] = {
     address,
     hashedPassword,
+    keySalt, // Store the salt for key derivation
     encryptedKey: encryptedKey.encryptedData,
     iv: encryptedKey.iv,
     authTag: encryptedKey.authTag,
@@ -160,7 +175,13 @@ async function verifyPassword(userId, password) {
     return false;
   }
 
-  return await bcrypt.compare(password, user.hashedPassword);
+  const isValid = await bcrypt.compare(password, user.hashedPassword);
+  
+  if (!isValid) {
+    logSecurityEvent(userId, 'Failed Login Attempt', 'high');
+  }
+
+  return isValid;
 }
 
 // Get wallet for a user
@@ -174,25 +195,41 @@ function getSafeWallet(userId) {
   const wallet = getWallet(userId);
   if (!wallet) return null;
   
-  const { hashedPassword, encryptedKey, iv, authTag, ...safeWallet } = wallet;
+  const { hashedPassword, encryptedKey, iv, authTag, keySalt, ...safeWallet } = wallet;
   return safeWallet;
 }
 
 // Get wallet instance for a user (with decrypted private key)
-function getWalletInstance(userId, provider) {
+function getWalletInstance(userId, provider, password) {
   const walletInfo = getWallet(userId);
 
   if (!walletInfo) {
     return null;
   }
 
-  const privateKey = decryptPrivateKey(
-    walletInfo.encryptedKey,
-    walletInfo.iv,
-    walletInfo.authTag
-  );
+  let encryptionKey;
+  if (walletInfo.keySalt && password) {
+    // New hardened wallet: derive key from password
+    encryptionKey = deriveKey(password, walletInfo.keySalt);
+  } else {
+    // Legacy wallet or password missing: use global ENCRYPTION_KEY
+    encryptionKey = Buffer.from(ENCRYPTION_KEY);
+  }
 
-  return new ethers.Wallet(privateKey, provider);
+  try {
+    const privateKey = decryptPrivateKey(
+      walletInfo.encryptedKey,
+      walletInfo.iv,
+      walletInfo.authTag,
+      encryptionKey
+    );
+
+    return new ethers.Wallet(privateKey, provider);
+  } catch (err) {
+    console.error(`Decryption failed for user ${userId}:`, err.message);
+    logSecurityEvent(userId, 'Private Key Decryption Failed', 'high');
+    return null;
+  }
 }
 
 // List all wallet addresses

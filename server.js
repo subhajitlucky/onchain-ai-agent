@@ -120,7 +120,8 @@ app.post('/api/chat', [authenticateUser, chatLimiter], async (req, res) => {
     }
 
     // Process the message through the AI agent
-    const result = await processCommand(userId, message, sessionId, mode || 'custodial');
+    const password = req.headers['x-password'];
+    const result = await processCommand(userId, message, sessionId, mode || 'custodial', password);
 
     // Respond with the result
     res.json(result);
@@ -212,7 +213,8 @@ app.post('/api/transaction/:userId', authenticateUser, async (req, res) => {
     }
 
     // Get wallet instance
-    const walletInstance = walletManager.getWalletInstance(userId, provider);
+    const password = req.headers['x-password'];
+    const walletInstance = walletManager.getWalletInstance(userId, provider, password);
 
     if (!walletInstance) {
       return res.status(404).json({
