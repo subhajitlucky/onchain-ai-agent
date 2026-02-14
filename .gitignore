@@ -1,6 +1,8 @@
 node_modules
 .env
 data/wallets.json
+data/sessions.json
+data/auth-sessions.json
 dist
 .DS_Store
 frontend/node_modules

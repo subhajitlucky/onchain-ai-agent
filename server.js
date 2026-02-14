@@ -3,6 +3,9 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const { ethers } = require('ethers');
 const { v4: uuidv4 } = require('uuid');
 const { processCommand, provider } = require('./ai-agent');
@@ -24,9 +27,33 @@ REQUIRED_ENV.forEach(key => {
 
 // Middleware
 app.use(helmet()); // Basic security headers
-app.use(cors());
+const allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173,http://localhost:3000')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error('Not allowed by CORS'));
+  }
+}));
 app.use(express.json());
 app.use(bodyParser.urlencoded({ extended: true }));
+app.use((req, res, next) => {
+  req.requestId = uuidv4();
+  const start = Date.now();
+  res.setHeader('x-request-id', req.requestId);
+  res.on('finish', () => {
+    console.log(JSON.stringify({
+      requestId: req.requestId,
+      method: req.method,
+      path: req.originalUrl,
+      status: res.statusCode,
+      durationMs: Date.now() - start
+    }));
+  });
+  next();
+});
 
 // Rate limiting to prevent brute force
 const authLimiter = rateLimit({
@@ -41,10 +68,96 @@ const chatLimiter = rateLimit({
   message: { success: false, message: 'Slow down! Too many messages.' }
 });
 
+const AUTH_SESSIONS_FILE = path.join(__dirname, 'data', 'auth-sessions.json');
+const authSessions = new Map();
+const AUTH_TTL_MS = 12 * 60 * 60 * 1000; // 12h
+
+function ensureAuthSessionStorage() {
+  const dir = path.join(__dirname, 'data');
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  if (!fs.existsSync(AUTH_SESSIONS_FILE)) fs.writeFileSync(AUTH_SESSIONS_FILE, JSON.stringify({}), 'utf8');
+}
+
+function loadAuthSessions() {
+  ensureAuthSessionStorage();
+  try {
+    const raw = JSON.parse(fs.readFileSync(AUTH_SESSIONS_FILE, 'utf8'));
+    Object.entries(raw).forEach(([token, session]) => authSessions.set(token, session));
+  } catch (e) {}
+}
+
+function saveAuthSessions() {
+  ensureAuthSessionStorage();
+  const obj = {};
+  for (const [token, session] of authSessions.entries()) obj[token] = session;
+  fs.writeFileSync(AUTH_SESSIONS_FILE, JSON.stringify(obj, null, 2), 'utf8');
+}
+
+function createAuthSession(userId, password) {
+  const token = crypto.randomBytes(32).toString('hex');
+  authSessions.set(token, {
+    userId,
+    password,
+    authVersion: walletManager.getAuthVersion(userId),
+    createdAt: Date.now(),
+    expiresAt: Date.now() + AUTH_TTL_MS
+  });
+  saveAuthSessions();
+  return token;
+}
+
+function getSessionFromRequest(req) {
+  const authHeader = req.headers.authorization || '';
+  const match = authHeader.match(/^Bearer\s+(.+)$/i);
+  if (!match) return null;
+  const token = match[1].trim();
+  const session = authSessions.get(token);
+  if (!session) return null;
+  if (Date.now() > session.expiresAt) {
+    authSessions.delete(token);
+    saveAuthSessions();
+    return null;
+  }
+  const currentAuthVersion = walletManager.getAuthVersion(session.userId);
+  if ((session.authVersion || 1) !== currentAuthVersion) {
+    authSessions.delete(token);
+    saveAuthSessions();
+    return null;
+  }
+  return { token, ...session };
+}
+
+function revokeAuthSession(req) {
+  const authHeader = req.headers.authorization || '';
+  const match = authHeader.match(/^Bearer\s+(.+)$/i);
+  if (!match) return false;
+  const deleted = authSessions.delete(match[1].trim());
+  if (deleted) saveAuthSessions();
+  return deleted;
+}
+
 // Authentication middleware
 async function authenticateUser(req, res, next) {
-  const userId = req.headers['x-user-id'] || req.body.userId || req.params.userId;
+  const requestedUserId = req.headers['x-user-id'] || req.body.userId || req.params.userId;
   const password = req.headers['x-password'];
+  const authHeader = req.headers.authorization || '';
+  const hasBearerToken = /^Bearer\s+.+/i.test(authHeader);
+  const session = getSessionFromRequest(req);
+
+  if (session) {
+    if (requestedUserId && requestedUserId !== session.userId) {
+      return res.status(403).json({ success: false, message: 'Token does not match requested user.' });
+    }
+    req.authUserId = session.userId;
+    req.authPassword = session.password;
+    return next();
+  }
+
+  if (hasBearerToken) {
+    return res.status(401).json({ success: false, message: 'Session expired or invalid. Please log in again.' });
+  }
+
+  const userId = requestedUserId;
 
   if (!userId) {
     return res.status(401).json({ success: false, message: 'User ID is required' });
@@ -67,6 +180,9 @@ async function authenticateUser(req, res, next) {
     return res.status(401).json({ success: false, message: 'Invalid password' });
   }
 
+  req.authUserId = userId;
+  req.authPassword = password;
+
   next();
 }
 
@@ -78,6 +194,10 @@ app.post('/api/signup', authLimiter, async (req, res) => {
       return res.status(400).json({ success: false, message: 'UserId and password required' });
     }
     const result = await walletManager.createWallet(userId, password);
+    if (result.success) {
+      const token = createAuthSession(userId, password);
+      return res.json({ ...result, token, userId });
+    }
     res.json(result);
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -91,7 +211,8 @@ app.post('/api/login', authLimiter, async (req, res) => {
     const isValid = await walletManager.verifyPassword(userId, password);
     if (isValid) {
       const wallet = walletManager.getWallet(userId);
-      res.json({ success: true, userId, address: wallet.address });
+      const token = createAuthSession(userId, password);
+      res.json({ success: true, token, userId, address: wallet.address });
     } else {
       res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
@@ -107,7 +228,8 @@ app.post('/api/login', authLimiter, async (req, res) => {
 // Chat endpoint - process user messages and manage session state
 app.post('/api/chat', [authenticateUser, chatLimiter], async (req, res) => {
   try {
-    const { userId, message, sessionId, mode } = req.body;
+    const { userId: bodyUserId, message, sessionId, mode, activeAddress } = req.body;
+    const userId = req.authUserId || bodyUserId;
 
     if (!userId || !message) {
       return res.status(400).json({
@@ -117,8 +239,15 @@ app.post('/api/chat', [authenticateUser, chatLimiter], async (req, res) => {
     }
 
     // Process the message through the AI agent
-    const password = req.headers['x-password'];
-    const result = await processCommand(userId, message, sessionId, mode || 'custodial', password);
+    const password = req.authPassword || req.headers['x-password'];
+    const result = await processCommand(
+      userId,
+      message,
+      sessionId,
+      mode || 'custodial',
+      password,
+      activeAddress
+    );
 
     // Respond with the result
     res.json(result);
@@ -134,7 +263,7 @@ app.post('/api/chat', [authenticateUser, chatLimiter], async (req, res) => {
 // Get wallet info (addresses and balances)
 app.get('/api/wallet/:userId', authenticateUser, async (req, res) => {
   try {
-    const { userId } = req.params;
+    const userId = req.authUserId || req.params.userId;
     const wallet = walletManager.getSafeWallet(userId);
 
     if (!wallet) {
@@ -182,7 +311,7 @@ app.post('/api/wallet/:userId', async (req, res) => {
 // Send ETH to a recipient
 app.post('/api/transaction/:userId', authenticateUser, async (req, res) => {
   try {
-    const { userId } = req.params;
+    const userId = req.authUserId || req.params.userId;
     const { recipient, amount } = req.body;
 
     if (!recipient || !amount) {
@@ -210,7 +339,7 @@ app.post('/api/transaction/:userId', authenticateUser, async (req, res) => {
     }
 
     // Get wallet instance
-    const password = req.headers['x-password'];
+    const password = req.authPassword || req.headers['x-password'];
     const walletInstance = walletManager.getWalletInstance(userId, provider, password);
 
     if (!walletInstance) {
@@ -277,7 +406,7 @@ app.post('/api/transaction/:userId', authenticateUser, async (req, res) => {
 // Get transaction history
 app.get('/api/history/:userId', authenticateUser, async (req, res) => {
   try {
-    const { userId } = req.params;
+    const userId = req.authUserId || req.params.userId;
     const wallet = walletManager.getSafeWallet(userId);
 
     if (!wallet) {
@@ -303,7 +432,8 @@ app.get('/api/history/:userId', authenticateUser, async (req, res) => {
 // Record a transaction (useful for non-custodial mode)
 app.post('/api/record-tx', authenticateUser, async (req, res) => {
   try {
-    const { userId, tx } = req.body;
+    const userId = req.authUserId || req.body.userId;
+    const { tx } = req.body;
     walletManager.recordTransaction(userId, tx);
     res.json({ success: true });
   } catch (error) {
@@ -314,7 +444,7 @@ app.post('/api/record-tx', authenticateUser, async (req, res) => {
 // Get security status
 app.get('/api/security-status/:userId', authenticateUser, (req, res) => {
   try {
-    const { userId } = req.params;
+    const userId = req.authUserId || req.params.userId;
     const status = walletManager.getSecurityStatus(userId);
     res.json({ success: true, ...status });
   } catch (error) {
@@ -322,9 +452,26 @@ app.get('/api/security-status/:userId', authenticateUser, (req, res) => {
   }
 });
 
+app.post('/api/logout', authenticateUser, (req, res) => {
+  revokeAuthSession(req);
+  res.json({ success: true });
+});
+
+app.get('/api/auth/me', authenticateUser, (req, res) => {
+  res.json({ success: true, userId: req.authUserId });
+});
+
+app.post('/api/auth/refresh', authenticateUser, (req, res) => {
+  const userId = req.authUserId;
+  const password = req.authPassword;
+  revokeAuthSession(req);
+  const token = createAuthSession(userId, password);
+  res.json({ success: true, token, userId });
+});
+
 // Basic health check
 app.get('/api/health', (req, res) => {
-  res.json({ success: true, status: 'Onchain AI Agent is active' });
+  res.json({ success: true, status: 'IntentPay is active' });
 });
 
 // Serve a simple home page
@@ -332,7 +479,7 @@ app.get('/', (req, res) => {
   res.send(`
     <html>
       <head>
-        <title>Onchain AI Agent</title>
+        <title>IntentPay</title>
         <style>
           body {
             font-family: Arial, sans-serif;
@@ -364,7 +511,7 @@ app.get('/', (req, res) => {
         </style>
       </head>
       <body>
-        <h1>Onchain AI Agent API</h1>
+        <h1>IntentPay API</h1>
         
         <p>Welcome to the Multi-User Wallet AI Agent API. Below are the available endpoints:</p>
         
@@ -398,6 +545,7 @@ app.get('/', (req, res) => {
 });
 
 // Start the server
+loadAuthSessions();
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`RPC URL: ${process.env.RPC_URL.substring(0, 20)}...`);

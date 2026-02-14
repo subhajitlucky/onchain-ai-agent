@@ -1,6 +1,6 @@
-# Onchain AI Agent: The Intent-Centric Web3 Assistant 🤖⛓️
+# IntentPay: The Intent-Centric Web3 Assistant 🤖⛓️
 
-Onchain AI Agent is not just a wallet; it's a **Cognitive Intent Layer** for the blockchain. While MetaMask is a tool for manual execution, this agent understands **human intent**, automates complex workflows, and brings "Web2-level" simplicity to decentralized finance.
+IntentPay is not just a wallet; it's a **Cognitive Intent Layer** for the blockchain. While MetaMask is a tool for manual execution, this agent understands **human intent**, automates complex workflows, and brings "Web2-level" simplicity to decentralized finance.
 
 ![Vision](https://img.shields.io/badge/Vision-Intent--Centric-blueviolet)
 ![Status](https://img.shields.io/badge/Status-Production--Ready--Roadmap-green)

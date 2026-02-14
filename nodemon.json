@@ -1,0 +1,5 @@
+{
+  "watch": ["server.js", "ai-agent.js", "wallet-manager.js"],
+  "ext": "js,mjs,cjs,json",
+  "ignore": ["data/*.json", "frontend/**", "dist/**", "node_modules/**"]
+}

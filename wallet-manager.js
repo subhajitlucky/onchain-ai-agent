@@ -98,6 +98,14 @@ function loadWallets() {
       wallets[userId].securityLogs = [];
       changed = true;
     }
+    if (typeof wallets[userId].paymentSecretHash === 'undefined') {
+      wallets[userId].paymentSecretHash = null;
+      changed = true;
+    }
+    if (typeof wallets[userId].authVersion === 'undefined') {
+      wallets[userId].authVersion = 1;
+      changed = true;
+    }
     if (!wallets[userId].keySalt) {
       // For legacy wallets, we'll keep using the global ENCRYPTION_KEY
       // We don't add a salt here to avoid breaking them
@@ -149,6 +157,8 @@ async function createWallet(userId, password) {
     address,
     hashedPassword,
     keySalt, // Store the salt for key derivation
+    paymentSecretHash: null,
+    authVersion: 1,
     encryptedKey: encryptedKey.encryptedData,
     iv: encryptedKey.iv,
     authTag: encryptedKey.authTag,
@@ -189,6 +199,110 @@ async function verifyPassword(userId, password) {
   return isValid;
 }
 
+// Rotate user password/PIN and re-encrypt the private key with a new derived key.
+async function resetPassword(userId, currentPassword, newPassword) {
+  const wallets = loadWallets();
+  const user = wallets[userId];
+
+  if (!user) return { success: false, message: 'User not found' };
+  if (!currentPassword) return { success: false, message: 'Current password is required' };
+  if (!newPassword || typeof newPassword !== 'string') {
+    return { success: false, message: 'New password is required' };
+  }
+
+  const trimmedNew = newPassword.trim();
+  if (trimmedNew.length < 6) {
+    return { success: false, message: 'New password/PIN must be at least 6 characters' };
+  }
+  if (trimmedNew === currentPassword) {
+    return { success: false, message: 'New password must be different from current password' };
+  }
+
+  const isValid = await verifyPassword(userId, currentPassword);
+  if (!isValid) return { success: false, message: 'Current password is invalid' };
+
+  try {
+    const oldKey = user.keySalt
+      ? deriveKey(currentPassword, user.keySalt)
+      : Buffer.from(ENCRYPTION_KEY);
+
+    const privateKey = decryptPrivateKey(
+      user.encryptedKey,
+      user.iv,
+      user.authTag,
+      oldKey
+    );
+
+    const newSalt = crypto.randomBytes(16).toString('hex');
+    const newKey = deriveKey(trimmedNew, newSalt);
+    const reEncrypted = encryptPrivateKey(privateKey, newKey);
+    const hashedPassword = await bcrypt.hash(trimmedNew, 10);
+
+    wallets[userId].hashedPassword = hashedPassword;
+    wallets[userId].authVersion = (wallets[userId].authVersion || 1) + 1;
+    wallets[userId].keySalt = newSalt;
+    wallets[userId].encryptedKey = reEncrypted.encryptedData;
+    wallets[userId].iv = reEncrypted.iv;
+    wallets[userId].authTag = reEncrypted.authTag;
+
+    if (!wallets[userId].securityLogs) wallets[userId].securityLogs = [];
+    wallets[userId].securityLogs.push({
+      event: 'Password/PIN Reset',
+      timestamp: new Date().toISOString(),
+      severity: 'medium'
+    });
+
+    saveWallets(wallets);
+    return { success: true, message: 'Password/PIN updated successfully.' };
+  } catch (err) {
+    console.error(`Password reset failed for user ${userId}:`, err.message);
+    logSecurityEvent(userId, 'Password/PIN Reset Failed', 'high');
+    return { success: false, message: 'Password reset failed. Please try again.' };
+  }
+}
+
+async function setPaymentSecret(userId, secret) {
+  const wallets = loadWallets();
+  const user = wallets[userId];
+  if (!user) return { success: false, message: 'User not found' };
+  if (!secret || typeof secret !== 'string') {
+    return { success: false, message: 'Payment secret is required' };
+  }
+
+  const trimmed = secret.trim();
+  if (trimmed.length < 4) {
+    return { success: false, message: 'Payment secret must be at least 4 characters' };
+  }
+
+  wallets[userId].paymentSecretHash = await bcrypt.hash(trimmed, 10);
+  if (!wallets[userId].securityLogs) wallets[userId].securityLogs = [];
+  wallets[userId].securityLogs.push({
+    event: 'Payment Secret Set/Updated',
+    timestamp: new Date().toISOString(),
+    severity: 'medium'
+  });
+  saveWallets(wallets);
+
+  return { success: true, message: 'Payment secret updated. Use `confirm <secret>` to approve payments.' };
+}
+
+async function verifyPaymentSecret(userId, secret) {
+  const user = getWallet(userId);
+  if (!user || !user.paymentSecretHash) return false;
+  if (!secret || typeof secret !== 'string') return false;
+  return bcrypt.compare(secret.trim(), user.paymentSecretHash);
+}
+
+function getAuthVersion(userId) {
+  const wallet = getWallet(userId);
+  return wallet?.authVersion || 1;
+}
+
+function hasPaymentSecret(userId) {
+  const user = getWallet(userId);
+  return !!(user && user.paymentSecretHash);
+}
+
 // Get wallet for a user
 function getWallet(userId) {
   const wallets = loadWallets();
@@ -200,7 +314,7 @@ function getSafeWallet(userId) {
   const wallet = getWallet(userId);
   if (!wallet) return null;
   
-  const { hashedPassword, encryptedKey, iv, authTag, keySalt, ...safeWallet } = wallet;
+  const { hashedPassword, paymentSecretHash, encryptedKey, iv, authTag, keySalt, ...safeWallet } = wallet;
   return safeWallet;
 }
 
@@ -350,17 +464,30 @@ function getSecurityStatus(userId) {
   if (!wallet) return null;
   
   const logs = wallet.securityLogs || [];
-  const highSeverityLogs = logs.filter(l => l.severity === 'high');
-  
-  // Simple security score calculation
-  let score = 100;
-  score -= (highSeverityLogs.length * 10);
-  
+  const score = calculateSecurityScore(logs);
+
   return {
-    score: Math.max(score, 0),
+    score,
     recentLogs: logs.slice(-5).reverse(),
     status: score > 80 ? 'Secure' : score > 50 ? 'Warning' : 'Critical'
   };
+}
+
+function calculateSecurityScore(logs = []) {
+  const highSeverityLogs = logs.filter(l => l.severity === 'high');
+
+  // Separate high-severity failed-login noise from critical security failures.
+  const failedLoginHighLogs = highSeverityLogs.filter(l => l.event === 'Failed Login Attempt');
+  const criticalHighLogs = highSeverityLogs.filter(l => l.event !== 'Failed Login Attempt');
+
+  // Score model:
+  // - Critical high events are severe.
+  // - Failed login attempts apply only a tiny penalty to avoid permanently showing "unsafe".
+  let score = 100;
+  score -= (criticalHighLogs.length * 10);
+  score -= (failedLoginHighLogs.length * 0.01);
+  score = Number(Math.max(score, 0).toFixed(2));
+  return score;
 }
 
 // Session Management
@@ -385,6 +512,11 @@ module.exports = {
   getWalletInstance,
   listWallets,
   verifyPassword,
+  resetPassword,
+  setPaymentSecret,
+  verifyPaymentSecret,
+  hasPaymentSecret,
+  getAuthVersion,
   addContact,
   getContactAddress,
   updateGuardrails,
@@ -392,6 +524,7 @@ module.exports = {
   recordTransaction,
   logSecurityEvent,
   getSecurityStatus,
+  calculateSecurityScore,
   loadSessions,
   saveSessions
 };
